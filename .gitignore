@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+# datasets and index files must never be committed (deliverable says so explicitly)
+*.hdf5
+*.npy
+*.faiss
+data/
