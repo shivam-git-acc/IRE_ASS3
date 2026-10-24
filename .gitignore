@@ -1,7 +1,10 @@
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
-# datasets and index files must never be committed (deliverable says so explicitly)
+# run_all.sh writes here; neither is part of the deliverable
+out/
+scratch/
+# datasets and index files must never be committed
 *.hdf5
 *.npy
 *.faiss

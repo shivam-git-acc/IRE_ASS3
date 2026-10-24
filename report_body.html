@@ -1,0 +1,259 @@
+<div class="titleblock">
+  <h1>Benchmarking Approximate Nearest Neighbour Search</h1>
+  <div class="subtitle">Assignment 3 — HNSW, IVF-Flat and IVF-PQ against exact FAISS search
+    on SIFT-1M and GloVe-100</div>
+  <div class="authors">{name} ({roll})</div>
+  <div class="affil">CS4.406 Information Retrieval &amp; Extraction — Assignment 3</div>
+  <div class="repo">every number from results/results.csv · {rows} benchmark runs · one machine
+    ({mid})</div>
+</div>
+
+<h2><span class="num">1</span>What Was Measured, and How</h2>
+<p>Three approximate indexes are benchmarked against exact search on two datasets, and then
+pushed until they break. <span class="lead">Machine.</span> Every number comes from one machine:
+{cpu}, {cores} logical cores, {mem} GB RAM, {gpu} — used only to compute brute-force ground
+truth, never to search an index. Python {py}, FAISS {faiss}, NumPy {numpy}.
+<code>machine_id {mid}</code> is identical across all {rows} rows of <code>results.csv</code>, so
+no comparison here spans hardware. It is a shared cloud VM; run-to-run spread on the exact
+baseline was 1.8–3.1%, recorded per row.</p>
+
+<p><span class="lead">Protocol.</span> Query timing is single-thread, one query at a time,
+<i>k</i>=10, one warm-up pass, three timed repeats, median reported. Recall is measured in a
+separate multi-threaded batched pass — it does not depend on thread count, so buying it
+single-threaded would have quadrupled the runtime for an identical answer. Builds use all four
+cores. GloVe is unit-normalised, so squared-L2 ranking equals cosine ranking and one exact
+baseline covers both datasets. Queries 0–4999 are the tune half and 5000–9999 the eval half;
+every reported number comes from the eval half.</p>
+
+<h2><span class="num">2</span>Exact Baseline and the Recall Metric (Part 1)</h2>
+
+<h3><span class="num">2.1</span>recall@10, and why ties matter</h3>
+<p>A returned id counts as correct when <span class="lead">its exact distance is ≤ the exact
+distance of the true 10th neighbour</span>, not when it appears in a stored top-10 id list. If
+the 10th and 11th neighbours are equidistant, returning either is equally right.</p>
+
+<p>This is not pedantry. SIFT vectors are integer-valued, so exact ties are common —
+<span class="lead">1.37%</span> of queries have a tie at <code>d10 == d11</code> and
+<span class="lead">12.03%</span> have one somewhere in the top 11 (GloVe: 0.01%). A naive
+id-overlap metric scores the dataset's <i>own published neighbours</i> at 0.99935 rather than
+1.0, putting a floor under SIFT recall that no index could cross. The metric also recomputes the
+exact distance of every returned id from the base vectors instead of trusting what the index
+reports — that matters for IVF-PQ, whose distances are estimates: on a test index, believing
+them gave 0.76 recall where the truth was 0.37. Twelve unit tests cover the metric, including
+the rank-10 tie, duplicate ids, <code>&#8722;1</code> padding, and agreement with an independent
+naive implementation on tie-free data.</p>
+
+<figure class="diagram">
+  <div class="inner" style="max-width:92mm;margin:0 auto">{d_proto}</div>
+  <figcaption><span class="lbl">Figure 1:</span> The measurement path. Search parameters are
+    chosen on the tune half, so a reported setting never saw the evaluation queries during
+    selection; recall and throughput are then measured by two separate passes.</figcaption>
+</figure>
+
+<h3><span class="num">2.2</span>One query at a time versus one batch</h3>
+<p>SIFT: <span class="lead">{s_exact:.2f}</span> qps one-at-a-time against
+<span class="lead">{s_batch:.1f}</span> qps batched, both single-threaded — a
+<span class="lead">{s_sp}×</span> gap. GloVe: {g_exact:.2f} → {g_batch:.1f} qps ({g_sp}×).
+Holding the thread count fixed is the point: comparing one-at-a-time against a multi-threaded
+batch would confound batching with parallelism, and the explanation below would be partly
+wrong.</p>
+<p>Both modes do identical arithmetic. One query at a time is a matrix–vector product: all
+488 MB of base vectors stream from RAM, each used for a single multiply-accumulate, then
+evicted — the kernel is bound by memory bandwidth, not by the CPU. Batched, it becomes a
+matrix–matrix product handed to BLAS: a tile of base vectors is loaded into L2/L3 once and
+reused against all 5,000 queries, so each byte fetched from RAM does thousands of times more
+arithmetic. That converts a bandwidth-bound kernel into a compute-bound one which can saturate
+the SIMD units. Per-call overhead is amortised too, but cache reuse dominates — §4 corroborates
+this: at 100K the base is 51 MB and partly L3-resident, and exact search runs 24% <i>faster</i>
+than the n<sup>&#8722;1</sup> line predicts.</p>
+
+<h2><span class="num">3</span>Benchmarking the Three Indexes (Part 2)</h2>
+<div class="duo">
+  <figure><img class="wide" src="{fig1}"><figcaption><span class="lbl">Figure 2:</span> SIFT-1M.
+    Faint lines are individual build settings; bold is each index's upper
+    envelope.</figcaption></figure>
+  <figure><img class="wide" src="{fig2}"><figcaption><span class="lbl">Figure 3:</span>
+    GloVe-100. Same axes — note the throughput scale is an order of magnitude
+    lower.</figcaption></figure>
+</div>
+
+<div class="tblock"><div class="tcap"><span class="lbl">Table 1:</span> Throughput at fixed recall, log-interpolated
+  along each index's best curve. A dash means the index never reached that recall.</div>
+{table1}</div>
+
+<div class="tblock"><div class="tcap"><span class="lbl">Table 2:</span> Build cost and memory at the setting that
+  reaches recall 0.95 — or, for IVF-PQ, the setting that comes closest.</div>
+{table2}</div>
+
+<h3><span class="num">3.1</span>Why IVF-PQ never reaches 0.95</h3>
+<p>IVF-PQ is the one index that fails, on both datasets, at every code size: peak recall
+<span class="lead">{s_pq:.3f}</span> on SIFT (m=64, 74 B/vector) and
+<span class="lead">{g_pq:.3f}</span> on GloVe (m=50, 59 B/vector). Recall rises monotonically
+with code size — SIFT 0.416 / 0.595 / 0.745 / 0.886 for m = 8/16/32/64 — but plateaus below
+target.</p>
+
+<div class="box"><span class="bt">The mechanism is measured, not asserted</span>
+  <p>On GloVe the median PQ reconstruction error ‖x &#8722; decode(encode(x))‖ is
+  <span class="lead">0.0712</span>, while the median rank-10 margin
+  <i>d</i><sub>11</sub> &#8722; <i>d</i><sub>10</sub> that PQ must resolve to get the top-10
+  boundary right is <span class="lead">0.00185</span> — a factor of <span class="lead">38</span>.
+  Any distance computed against a reconstruction is uncertain by far more than the gap being
+  judged, so ordering at the boundary is dominated by quantisation noise. This is a ceiling, not
+  a tuning problem: more <code>nprobe</code> widens the candidate set but the ranking inside it
+  stays wrong, which is exactly what the flat tails in Figures 2–3 show.</p></div>
+
+<h2><span class="num">4</span>Scaling: the Cost of Recall 0.95 versus n (Part 3)</h2>
+
+
+<p><span class="lead">Hypotheses were committed to git before this ran; all six held.</span>
+Fitted throughput exponents: exact <span class="lead">n<sup>{e_exact:+.3f}</sup></span>,
+IVF-Flat <span class="lead">n<sup>{e_ivf:+.3f}</sup></span>, HNSW
+<span class="lead">n<sup>{e_hnsw:+.3f}</sup></span> — strictly ordered, as H3.3 predicted. Exact
+search pays linearly because it reads every vector; HNSW barely notices because greedy descent
+visits O(log n) nodes, and the exponent falls short of 0 only because <code>efSearch</code> must
+itself grow with n to hold recall fixed. Two consequences follow. First,
+<span class="lead">HNSW's advantage over IVF-Flat grows with scale</span>: 1.63× at 100K, 2.58×
+at 300K, 2.91× at 1M — a graph's logarithmic advantage needs scale to pay for itself. Second,
+<span class="lead">build cost moves the other way</span>: HNSW costs 134.6 µs/vector at 100K and
+220.3 µs/vector at 1M, 1.64× more per vector, super-linear as O(n log n) implies, while exact
+search's "build" is a memcpy. The one deviation I predicted also appeared: exact at 100K hit
+286.9 qps against a 231 qps extrapolation — 24% above the line — which is the L3 cache effect
+named in the hypothesis as the first thing to check.</p>
+
+<figure><img class="mid" src="{fig3}"><figcaption><span class="lbl">Figure 4:</span> SIFT at
+  100K / 300K / 1M on nested, seeded subsets. Search parameters were chosen on the tune half and
+  timed on the eval half.</figcaption></figure>
+
+<h2><span class="num">5</span>Hard Geometry: Making Both Indexes Fail (Part 4)</h2>
+
+
+<p>A 2×4 design varying one thing: distance concentration. Uniform coordinates in
+[0,1]<sup>d</sup> make every pairwise distance converge as d grows; the
+<span class="lead">clustered control</span> has the same n, the same d, the same generator and
+the same search budget, and differs only in geometry. Since a distance costs O(d), reporting
+throughput alone would measure arithmetic and call it geometry — so the primary measurements are
+dimension-independent: recall at a fixed budget (<code>efSearch</code>=64,
+<code>nprobe</code>=16 everywhere) and the fraction of the data actually scanned, read from
+FAISS's own distance counters. Relative contrast RC@10 across d = 16/64/256/1024 falls
+<span class="mono">{rc_u}</span> for uniform data while the control holds
+<span class="mono">{rc_c}</span> — SIFT measures 2.63 and GloVe 1.51, so the sweep spans from
+easier than SIFT to far harder than GloVe.</p>
+
+<figure><img class="w88" src="{fig4}"><figcaption><span class="lbl">Figure 5:</span> 200,000
+  synthetic vectors per cell, from a seeded generator. <b>(a)</b> the manipulation — contrast
+  collapses for uniform data only; <b>(b)</b> recall at an identical budget everywhere;
+  <b>(c)</b> what recall 0.95 costs at d=1024.</figcaption></figure>
+
+<div class="tblock"><div class="tcap"><span class="lbl">Table 3:</span> Recall@10 at the fixed search budget as
+  dimension rises. The control differs from the uniform row only in geometry.</div>
+<table class="lt"><thead><tr><th>condition</th><th>index</th>
+  <th>recall@10 at d = 16 → 64 → 256 → 1024</th></tr></thead><tbody>
+  <tr><td>uniform</td><td>HNSW</td><td>{u_h}</td></tr>
+  <tr><td>uniform</td><td>IVF-Flat</td><td>{u_i}</td></tr>
+  <tr><td><b>clustered (control)</b></td><td>HNSW</td><td>{c_h}</td></tr>
+  <tr><td><b>clustered (control)</b></td><td>IVF-Flat</td><td>{c_i}</td></tr>
+</tbody></table></div>
+
+<div class="box"><span class="bt">The control is the result</span>
+  <p>At d=256, uniform HNSW scores 0.191 and clustered HNSW 0.936; at d=1024, 0.127 against
+  0.904. Same dimension, same budget, same arithmetic per distance — so the collapse is caused by
+  vanishing contrast, not by dimensionality and not by compute cost. Reaching 0.95 on uniform
+  d=1024 is not possible cheaply: HNSW peaks at 0.687 having scanned 15.6% of the data, and
+  IVF-Flat only reaches 0.897 at 81% scanned — both degenerate toward the linear scan they were
+  meant to avoid.</p></div>
+
+<div class="box"><span class="bt">H4.5 deserves a caveat I would rather state than hide</span>
+  <p>I predicted HNSW would degrade at least as fast as IVF-Flat, and the pre-registered
+  criterion — absolute recall drop across the uniform row — says it did: 0.867 against 0.749. But
+  HNSW starts higher <i>and ends higher</i> (0.127 vs 0.078) while scanning three times less data
+  (0.97% vs 2.92%). Normalised for work, HNSW is clearly the better index at d=1024, the opposite
+  of what "degrades faster" suggests. The criterion was poorly chosen; the verdict is reported as
+  the pre-registration demands, and should be read with this.</p></div>
+
+<h2><span class="num">6</span>Answers (Part 5)</h2>
+
+<div class="qa"><span class="q">Q1 — At recall 0.95, which index is fastest on each dataset, and
+  does the answer change between datasets?</span>
+  <p>HNSW on both, but the margin and the settings change. SIFT:
+  <span class="lead">{s_hnsw:.0f}</span> qps (M=16) against IVF-Flat's {s_ivf:.0f}
+  (nlist=4096) — <span class="lead">{s_hi}×</span>, and {s_he}× the exact baseline. GloVe:
+  <span class="lead">{g_hnsw:.0f}</span> qps (M=32) against {g_ivf:.0f} (nlist=16384) — only
+  <span class="lead">{g_hi}×</span>, and {g_he}× exact. The winner is stable; the margin halves
+  and the best build setting flips in both families. On GloVe HNSW needs M=32, and M=8 cannot
+  reach 0.95 at all (peak 0.865), while IVF-Flat's optimum moves from 4,096 to 16,384 cells. The
+  cause is geometry: GloVe's RC@10 is 1.51 against SIFT's 2.63, so the graph has a weaker
+  distance gradient to descend and needs more degree and more candidates. Absolute throughput
+  falls ~10× for HNSW between the datasets but only ~5× for IVF-Flat — the harder geometry costs
+  the graph more than it costs the partition.</p></div>
+
+<div class="qa"><span class="q">Q2 — What do the indexes cost in build time and memory? What
+  does PQ save, and what does it give up?</span>
+  <p>See Table 2. On SIFT, HNSW costs 208 s and 656 B/vector — 512 of data plus 144 of graph;
+  IVF-Flat 62 s and 522 B/vector, nearly free on top of the raw vectors since it stores only ids
+  and cell assignments. GloVe is dearer for HNSW (434 s, 672 B/vector) because higher degree is
+  needed to reach the target at all. PQ saves an order of magnitude: 74 B/vector on SIFT, 7×
+  smaller than flat, and 59 on GloVe, built in ~70 s. What it gives up is the top of the recall
+  range outright — it cannot reach 0.95 on either dataset at any code size tested, for the
+  quantisation-versus-margin reason in §3.1. PQ is the right choice only when the memory budget
+  is binding and ≈0.88 recall is acceptable.</p></div>
+
+<div class="qa"><span class="q">Q3 — What did Parts 3 and 4 show, and what do they imply about
+  when the headline numbers could mislead?</span>
+  <p>Part 3: the cost of recall 0.95 scales as n<sup>{e_exact:+.2f}</sup> /
+  n<sup>{e_ivf:+.2f}</sup> / n<sup>{e_hnsw:+.2f}</sup> for exact / IVF-Flat / HNSW, so <i>the
+  ranking itself is a function of scale</i> — at 100K HNSW and IVF-Flat are within 1.63×, at 1M
+  they are 2.91× apart. Part 4: at a fixed budget, recall collapses from 0.994 to 0.127 as
+  contrast vanishes, while a control at the same dimension holds 0.904. Together they say a
+  headline ANN number is a property of <i>this dataset at this size</i>, not of the index. The
+  same HNSW configuration delivers 5,817 qps at recall 0.95 on SIFT, 584 on GloVe, and cannot
+  reach 0.95 at all on uniform d=1024. Quoting one number without the dataset's size and contrast
+  is close to meaningless.</p></div>
+
+<div class="qa"><span class="q">Q4 — With 150,000 vectors, or 10 million, a 100 ms budget and
+  16 GB of RAM — would you use ANN, and with what settings?</span>
+  <p><span class="lead">At 150K, no.</span> Extrapolating the measured exact-search fit gives
+  ≈190 qps, i.e. ≈5 ms per query — twenty times inside the budget — for 77 MB of RAM, exact
+  answers, no build step and no parameters to mis-set. ANN would still be ~30× faster (at 100K we
+  measured HNSW at 8,858 qps against exact's 287), so reach for it if throughput rather than
+  latency is the constraint; otherwise the complexity buys nothing the budget needs.</p>
+  <p><span class="lead">At 10M, yes, necessarily.</span> Exact extrapolates to ≈1.9 qps, ≈530 ms
+  per query — over budget by 5×. HNSW extrapolates to ≈2,000 qps (0.5 ms) at ≈6.6 GB; IVF-Flat to
+  ≈390 qps (2.6 ms) at ≈5.2 GB. Both fit 16 GB. I would default to <span class="lead">IVF-Flat
+  with nlist ≈ 32,768</span> — continuing the observed 1,024 → 4,096 → 8,192 trend — and
+  <code>nprobe</code> tuned on held-out queries: it meets the budget with 40× headroom, costs
+  about half the build time, and is far easier to update incrementally. Choose HNSW M=16 instead
+  if per-query latency is the binding constraint. PQ only if you must fit under ≈1 GB, accepting
+  recall ≈0.89. <i>Caveat:</i> these extrapolate a decade beyond the measured range from three
+  points each; I would re-measure at 10M before committing.</p></div>
+
+<div class="qa"><span class="q">Q5 — Name two ways your own benchmark could be misleading, and
+  say whether you tested them.</span>
+  <p><span class="lead">(a) One shared cloud VM.</span> Every number comes from a single 4-core
+  Kaggle instance. I did test the noise — spread across repeats was 1.8–3.1%, recorded per row as
+  <code>qps_spread_pct</code>, and <code>machine_id</code> is identical across all {rows} rows, so
+  no comparison spans hardware. I did <i>not</i> test whether the ranking survives a different
+  microarchitecture, or more cores: all query timing is deliberately single-thread, and HNSW and
+  IVF parallelise differently, so a multi-core ranking could differ.</p>
+  <p><span class="lead">(b) Choosing the best build setting on the evaluation split.</span>
+  Part 2's per-index envelope picks the best of 3–4 build settings using eval recall, which is
+  mild selection bias. I tested this only partially: Part 3 avoids it entirely by selecting the
+  search parameter on the tune half and reporting eval timings, and the bias is bounded — a
+  5,000-query recall mean has a standard error near 0.0014, far below the gaps involved (SIFT
+  HNSW M=16 at 5,817 qps against M=32 at 5,505).</p>
+  <p><span class="lead">(c) A third risk I did not fully resolve.</span> Part 2 interpolates
+  throughput <i>to</i> recall 0.95, while Part 3 reports the cheapest measured grid point reaching
+  it, which overshoots — HNSW at 1M is 5,817 qps interpolated against 4,237 qps measured at recall
+  0.9712. These are different quantities and are never mixed within a table, but a reader
+  comparing across sections could be misled.</p></div>
+
+<h2><span class="num">7</span>Reproducing This</h2>
+<p><code>bash run_all.sh</code> in <code>code/</code> regenerates every number, figure and table
+from the data files; <code>--quick</code> does the same on 100,000 SIFT vectors in under two
+minutes. Neither needs a GPU — ground truth falls back to FAISS on the CPU — nor a Hugging Face
+token. <code>results/results.csv</code> carries all {rows} runs with their parameters, recall,
+median QPS and spread, latency, build time, memory, thread count, query split and machine. The
+Part 3 and 4 hypotheses were committed to git before those experiments ran, and the recall
+metric's twelve unit tests are the pipeline's first stage, so a broken metric stops the run
+before it produces numbers.</p>
+
+<div class="refs"><span class="lead">Data and tools.</span> Datasets: SIFT-128-euclidean and GloVe-100-angular from ann-benchmarks.com — data only, as the ground rules require. Indexes: FAISS {faiss} (Johnson, Douze &amp; Jégou, IEEE Big Data 2019); HNSW (Malkov &amp; Yashunin, TPAMI 2018); product quantization (Jégou, Douze &amp; Schmid, TPAMI 2011).</div>

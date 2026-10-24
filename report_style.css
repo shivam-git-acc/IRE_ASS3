@@ -1,0 +1,91 @@
+/* Print styles for report.pdf.
+   The design follows the reference report IRE2-3.pdf: a LaTeX-style single column with a
+   centred title block, navy numbered headings, captions above tables and below figures,
+   navy table headers with striped rows, and cream/gold callout boxes. Colours were sampled
+   from that PDF rather than guessed: navy #143c78, stripe #f0f4fa, cream #faf7eb,
+   gold #be9628. */
+
+@page { size: A4; margin: 15mm 17mm 15mm; }
+
+:root {
+  --navy: #143c78;
+  --stripe: #f0f4fa;
+  --cream: #faf7eb;
+  --gold: #be9628;
+  --ink: #111111;
+  --mute: #555555;
+  --rule: #c8ccd4;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: "P052", "URW Palladio L", "Palatino Linotype", "Palatino", Georgia, serif;
+  font-size: 8.55pt; line-height: 1.275; color: var(--ink);
+  text-align: justify; hyphens: auto;
+}
+
+/* ---------------- title block ---------------- */
+.titleblock { border-top: 0.9px solid var(--navy); border-bottom: 0.9px solid var(--navy);
+              padding: 2.8mm 0 2.3mm; margin-bottom: 3.4mm; text-align: center; }
+h1 { font-size: 16.5pt; color: var(--navy); margin: 0 0 1.2mm; line-height: 1.16;
+     font-weight: 700; letter-spacing: -0.15px; }
+.subtitle { font-size: 10pt; color: var(--ink); margin-bottom: 2.6mm; }
+.authors { font-size: 9.4pt; margin-bottom: 0.9mm; }
+.affil { font-size: 8.8pt; color: var(--mute); margin-bottom: 0.9mm; }
+.repo { font-family: "Nimbus Mono PS", "DejaVu Sans Mono", ui-monospace, monospace;
+        font-size: 8.0pt; color: var(--navy); }
+
+/* ---------------- structure ---------------- */
+h2 { font-size: 10.3pt; color: var(--navy); margin: 2.9mm 0 1.2mm; font-weight: 700;
+     text-align: left; break-after: avoid; }
+h3 { font-size: 9.5pt; color: var(--navy); margin: 2.3mm 0 1.0mm; font-weight: 700;
+     text-align: left; break-after: avoid; }
+h2 .num, h3 .num { margin-right: 2.2mm; }
+p { margin: 0 0 1.3mm; }
+.lead { font-weight: 700; }
+
+/* ---------------- figures ---------------- */
+figure { margin: 1.5mm 0 1.9mm; break-inside: avoid; text-align: center; }
+figure img { display: block; margin: 0 auto; }
+figure img.wide { width: 100%; }
+figure img.mid { width: 66%; }
+figure img.w88 { width: 84%; }
+figcaption { font-size: 7.7pt; color: var(--ink); margin-top: 1.4mm; text-align: center;
+             line-height: 1.3; }
+figcaption .lbl { color: var(--navy); font-weight: 700; }
+.duo { display: grid; grid-template-columns: 1fr 1fr; gap: 3.5mm; align-items: end; }
+.diagram { border: 0.5px solid var(--rule); background: #fdfdfd; border-radius: 1.5px;
+           padding: 2.2mm 2.6mm 1.6mm; }
+.diagram .inner { text-align: left; }
+
+/* ---------------- tables ---------------- */
+.tblock { break-inside: avoid; }
+.tcap { font-size: 7.7pt; text-align: center; margin: 2.6mm 0 1.1mm; line-height: 1.3; }
+.tcap .lbl { color: var(--navy); font-weight: 700; }
+table { border-collapse: collapse; width: 100%; font-size: 7.8pt; margin: 0 0 1.4mm;
+        break-inside: avoid; }
+thead th { background: var(--navy); color: #ffffff; font-weight: 700; text-align: left;
+           padding: 1.0mm 1.4mm; font-size: 7.5pt; border: none; }
+tbody td { padding: 0.85mm 1.4mm; border: none; text-align: left; }
+tbody tr:nth-child(even) { background: var(--stripe); }
+tbody td:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
+table.lt tbody td { text-align: left; }
+table.lt tbody td:last-child {
+  font-family: "Nimbus Mono PS", "DejaVu Sans Mono", ui-monospace, monospace; font-size: 7.4pt; }
+
+/* ---------------- callouts ---------------- */
+.box { background: var(--cream); border-left: 2.6px solid var(--gold);
+       padding: 1.6mm 2.4mm 1.3mm; margin: 2.0mm 0 2.2mm; break-inside: avoid; }
+.box .bt { color: var(--gold); font-weight: 700; display: block; margin-bottom: 0.9mm;
+           font-size: 9.4pt; }
+.box p:last-child { margin-bottom: 0; }
+
+/* ---------------- inline ---------------- */
+code, .mono { font-family: "Nimbus Mono PS", "DejaVu Sans Mono", ui-monospace, monospace;
+              font-size: 7.9pt; }
+.qa { margin-bottom: 1.5mm; }
+.qa .q { break-after: avoid; }
+.qa .q { display: block; font-weight: 700; color: var(--navy); margin-bottom: 0.5mm; }
+.refs { font-size: 7.8pt; color: var(--mute); margin-top: 2mm; border-top: 0.5px solid var(--rule);
+        padding-top: 1.6mm; }

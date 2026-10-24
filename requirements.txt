@@ -1,0 +1,21 @@
+# Pinned to the versions every measurement in the report was taken with
+# (Kaggle "Latest Container Image", Python 3.13.15, 2026-10-23/24).
+numpy==2.1.3
+pandas==2.2.3
+faiss-cpu==1.15.1
+h5py==3.16.0
+matplotlib==3.10.0
+pytest==8.4.2
+
+# Optional. Only used to compute brute-force ground truth on a GPU; without it the same
+# ground truth is computed through faiss on the CPU (see annbench_core.exact_gt).
+# torch==2.11.0
+
+# Optional. Only used to mirror results to Hugging Face; skipped when HF_TOKEN is unset.
+# huggingface_hub==0.36.0
+
+# Optional, for build_report.py only. Chrome cannot stamp page numbers itself (it ignores
+# CSS @page margin boxes), so they are drawn onto the finished PDF. Without these the report
+# still builds, just unnumbered.
+# pypdf==6.21.2
+# reportlab==4.2.5
