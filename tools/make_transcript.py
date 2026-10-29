@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Convert this project's Claude Code session log into ai_log/transcript.md.
+
+The assignment asks for "all your prompts and the responses". Claude Code already keeps a
+complete JSONL record of the session, so the transcript is generated from that rather than
+reconstructed from memory — nothing here is written after the fact.
+
+Tool calls are reduced to a single labelled line each. The raw log is ~40 MB, almost all of
+it command output, file contents and base64 images; reproducing that would bury the prompts
+and responses the deliverable actually asks for. What a tool did, and in what order, is kept.
+
+    python tools/make_transcript.py                 # auto-locate the session log
+    python tools/make_transcript.py --jsonl PATH    # or point at one
+    python tools/make_transcript.py --full          # keep tool inputs too
+"""
+
+import argparse
+import json
+import pathlib
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+CODE = HERE.parent
+OUT = CODE.parent / "ai_log" / "transcript.md"
+DEFAULT_LOG_DIR = pathlib.Path.home() / ".claude" / "projects"
+
+
+def find_log():
+    """Newest session log for this project."""
+    if not DEFAULT_LOG_DIR.is_dir():
+        return None
+    cands = sorted(DEFAULT_LOG_DIR.rglob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    for p in reversed(cands):
+        if "IRE" in p.parent.name or "IRE" in p.name:
+            return p
+    return cands[-1] if cands else None
+
+
+def blocks(content):
+    """Normalise a message's content into a list of blocks."""
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}]
+    return content if isinstance(content, list) else []
+
+
+def clean(text):
+    """Drop the harness chatter that is not part of the conversation."""
+    import re
+    text = re.sub(r"<system-reminder>.*?</system-reminder>", "", text, flags=re.S)
+    text = re.sub(r"<ide_opened_file>.*?</ide_opened_file>", "", text, flags=re.S)
+    text = re.sub(r"<ide_selection>.*?</ide_selection>", "", text, flags=re.S)
+    text = re.sub(r"<local-command-[^>]*>.*?</local-command-[^>]*>", "", text, flags=re.S)
+    return text.strip()
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--jsonl", help="path to the session .jsonl")
+    ap.add_argument("--full", action="store_true",
+                    help="include tool inputs as well as the tool name")
+    a = ap.parse_args()
+
+    log = pathlib.Path(a.jsonl) if a.jsonl else find_log()
+    if not log or not log.exists():
+        print("Could not find a Claude Code session log.", file=sys.stderr)
+        print(f"Looked under {DEFAULT_LOG_DIR}. Pass one with --jsonl PATH.", file=sys.stderr)
+        return 1
+
+    turns, n_user, n_asst, n_tool = [], 0, 0, 0
+    with open(log, errors="replace") as fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("type") not in ("user", "assistant"):
+                continue
+            msg = rec.get("message")
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role")
+            ts = (rec.get("timestamp") or "")[:19].replace("T", " ")
+
+            if role == "user":
+                parts = []
+                for b in blocks(msg.get("content")):
+                    if b.get("type") == "text":
+                        t = clean(b.get("text", ""))
+                        if t:
+                            parts.append(t)
+                    elif b.get("type") == "image":
+                        parts.append("*[screenshot pasted]*")
+                    # tool_result blocks are command output, not conversation
+                if parts:
+                    n_user += 1
+                    turns.append(("user", ts, "\n\n".join(parts)))
+
+            elif role == "assistant":
+                said, tools = [], []
+                for b in blocks(msg.get("content")):
+                    if b.get("type") == "text":
+                        t = clean(b.get("text", ""))
+                        if t:
+                            said.append(t)
+                    elif b.get("type") == "tool_use":
+                        name = b.get("name", "tool")
+                        inp = b.get("input") or {}
+                        label = inp.get("description") or inp.get("file_path") or ""
+                        if a.full and name == "Bash" and inp.get("command"):
+                            label += "\n    $ " + inp["command"].strip().replace("\n", "\n      ")
+                        tools.append(f"{name}: {label}".strip().rstrip(":"))
+                        n_tool += 1
+                if said or tools:
+                    n_asst += 1
+                    turns.append(("assistant", ts, "\n\n".join(said), tools))
+
+    lines = [
+        "# Session transcript",
+        "",
+        "Generated by `code/tools/make_transcript.py` directly from the Claude Code session",
+        f"log (`{log.name}`), not written from memory.",
+        "",
+        "Every prompt and every assistant reply is reproduced verbatim. Tool calls — file",
+        "edits, shell commands, searches — are listed by name and purpose in the order they",
+        "ran; their inputs and outputs are omitted because the raw log is ~40 MB of command",
+        "output, file contents and images, which would bury the conversation. Re-run with",
+        "`--full` to include tool inputs.",
+        "",
+        f"**{n_user} prompts · {n_asst} assistant turns · {n_tool} tool calls**",
+        "",
+        "---",
+        "",
+    ]
+    for turn in turns:
+        if turn[0] == "user":
+            _, ts, text = turn
+            lines += [f"## Prompt — {ts}", "", text, "", "---", ""]
+        else:
+            _, ts, text, tools = turn
+            lines += [f"### Response — {ts}", ""]
+            if text:
+                lines += [text, ""]
+            if tools:
+                lines += ["<sub>tool calls: " + "; ".join(tools) + "</sub>", ""]
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text("\n".join(lines))
+    print(f"wrote {OUT}  ({OUT.stat().st_size / 1024:.0f} KB)")
+    print(f"  {n_user} prompts, {n_asst} assistant turns, {n_tool} tool calls")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
