@@ -114,55 +114,55 @@ def main():
     if not out.exists():
         print(r.stderr[-2000:])
         return 1
-    stamp_page_numbers(out, f"{a.name} ({a.roll})")
+    stamp_page_numbers(out)
     print(f"wrote {out} ({out.stat().st_size / 1024:.0f} KB)")
     return verify(html, out)
 
 
-def stamp_page_numbers(pdf, left_text):
-    """Draw "name (roll)" and "N / M" along the foot of every page.
+def stamp_page_numbers(pdf, _unused=None):
+    """Draw a centred page number at the foot of every page, LaTeX `plain` style.
 
     Chrome cannot do this itself: its print path ignores CSS @page margin boxes, and its own
     --print-to-pdf footer is not configurable from the command line. So the numbers are
-    stamped onto the finished PDF instead. If pypdf is not installed the report is still
-    perfectly valid, just unnumbered, so this never fails the build.
+    stamped onto the finished PDF afterwards.
+
+    If the two libraries are missing this used to print one quiet line and carry on, which
+    is how a rebuild on another interpreter silently produced an unnumbered report. It now
+    says so unmissably.
     """
     try:
         from pypdf import PdfReader, PdfWriter
         from reportlab.pdfgen import canvas
         from reportlab.lib.pagesizes import A4
     except ImportError:
-        print("  (pypdf/reportlab not installed — page numbers skipped)")
+        print("\n  " + "=" * 66)
+        print("  !! PAGE NUMBERS SKIPPED - pypdf and reportlab are not installed here.")
+        print("     The report is still valid, but it has no page numbers.")
+        print(f"     Fix with:  {sys.executable} -m pip install pypdf reportlab")
+        print("  " + "=" * 66 + "\n")
         return
 
     import io
     reader = PdfReader(str(pdf))
     n = len(reader.pages)
-    overlay = io.BytesIO()
-    cv = canvas.Canvas(overlay, pagesize=A4)
-    w, h = A4
+    buf = io.BytesIO()
+    cv = canvas.Canvas(buf, pagesize=A4)
+    w, _h = A4
     for i in range(1, n + 1):
-        cv.setFont("Helvetica", 7.4)
-        cv.setFillColorRGB(0.45, 0.47, 0.52)
-        cv.drawString(48, 24, left_text)
-        cv.setFillColorRGB(0.08, 0.24, 0.47)          # the document's navy
-        cv.setFont("Helvetica-Bold", 7.6)
-        cv.drawRightString(w - 48, 24, f"{i} / {n}")
-        cv.setStrokeColorRGB(0.80, 0.82, 0.85)
-        cv.setLineWidth(0.4)
-        cv.line(48, 32, w - 48, 32)
+        cv.setFont("Times-Roman", 9.5)
+        cv.setFillColorRGB(0.07, 0.07, 0.07)
+        cv.drawCentredString(w / 2, 26, str(i))
         cv.showPage()
     cv.save()
-    overlay.seek(0)
+    buf.seek(0)
 
     writer = PdfWriter()
-    marks = PdfReader(overlay)
-    for page, mark in zip(reader.pages, marks.pages):
+    for page, mark in zip(reader.pages, PdfReader(buf).pages):
         page.merge_page(mark)
         writer.add_page(page)
     with open(pdf, "wb") as f:
         writer.write(f)
-    print(f"  stamped page numbers on {n} pages")
+    print(f"  stamped page numbers 1-{n}")
 
 
 def verify(html, pdf):

@@ -14,8 +14,8 @@ pytest==8.4.2
 # Optional. Only used to mirror results to Hugging Face; skipped when HF_TOKEN is unset.
 # huggingface_hub==0.36.0
 
-# Optional, for build_report.py only. Chrome cannot stamp page numbers itself (it ignores
-# CSS @page margin boxes), so they are drawn onto the finished PDF. Without these the report
-# still builds, just unnumbered.
-# pypdf==6.21.2
-# reportlab==4.2.5
+# Needed by build_report.py only, to stamp page numbers onto the finished PDF (Chrome
+# ignores CSS @page margin boxes, so it cannot do this itself). The benchmarks do not use
+# them; without them the report builds unnumbered and says so loudly.
+pypdf==6.21.2
+reportlab==4.2.5
